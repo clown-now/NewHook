@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_name">NewHook</string>
+    <string name="module_desc">汽水音乐解锁 (本地+服务端双层 + 去广告)</string>
+</resources>
