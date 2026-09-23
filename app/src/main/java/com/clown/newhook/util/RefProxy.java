@@ -1,73 +1,115 @@
 package com.clown.newhook.util;
 
+import java.lang.reflect.Executable;
 import java.lang.reflect.Method;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.libxposed.api.XposedInterface;
 
 /**
- * API 反射代理层 —— 复刻 WinHook 的手法。
+ * Hook 代理层 —— libxposed 102 API 风格，复刻 WinHook 的混淆手法。
  *
- * WinHook 把 XposedHelpers.findAndHookMethod 包进反射方法
- *   m45(Object clazz, Object name, Object[] params)
- * 静态反编译看不到直接的 findAndHookMethod 调用，绕过特征扫描。
- * 本类把 findClass / hookAllMethods 也一并包装。
+ * 核心差异:
+ *   旧 API: XposedHelpers.findAndHookMethod(...) + param.setResult(x)
+ *   新 API: this.hook(method).intercept(chain -> ...) —— 直接 return 改结果
+ *
+ * 手法保留: 反射调用 hook()/log() 包装，静态扫不到直接 API 痕迹。
  */
-public final class RefProxy {
+public final class RefProxy implements XposedInterface.Hooker {
 
     private static volatile int g_b = 0x77E1;
 
-    private RefProxy() {}
+    /** hook 目标方法 */
+    private final Method target;
+    /** 固定返回值策略：<0 = 不改, 0 = true, 1 = false, 2 = 指定对象 */
+    private final int mode;
+    private final Object fixed;
+    private final XposedInterface xposed;
+
+    private RefProxy(XposedInterface xposed, Method target, int mode, Object fixed) {
+        this.xposed = xposed;
+        this.target = target;
+        this.mode = mode;
+        this.fixed = fixed;
+    }
 
     /** 恒真干扰分支 */
     private static boolean live() {
         return (g_b | 0x1357) != 0;
     }
 
-    private static Class<?> xh() throws ClassNotFoundException {
-        return Class.forName("de.robv.android.xposed.XposedHelpers");
+    // ==================== 构造 ====================
+
+    /** 改返回值为 true（仅当原值 instanceof Boolean） */
+    public static RefProxy forceTrue(XposedInterface x, Method m) {
+        return new RefProxy(x, m, 0, null);
     }
 
-    private static Class<?> xbridge() throws ClassNotFoundException {
-        return Class.forName("de.robv.android.xposed.XposedBridge");
+    /** 改返回值为 false */
+    public static RefProxy forceFalse(XposedInterface x, Method m) {
+        return new RefProxy(x, m, 1, null);
     }
 
-    /** 反射 findClass(name, classLoader) */
-    public static Class<?> findClass(String name, ClassLoader cl) throws Throwable {
+    /** 改返回值为指定对象 */
+    public static RefProxy force(XposedInterface x, Method m, Object v) {
+        return new RefProxy(x, m, 2, v);
+    }
+
+    // ==================== 安装 ====================
+
+    /**
+     * 安装 hook。反射调用 xposed.hook(...)，绕过静态特征。
+     */
+    public void install() throws Throwable {
         if (!live()) throw new IllegalStateException();
-        return (Class<?>) xh().getMethod("findClass", String.class, ClassLoader.class)
-                .invoke(null, name, cl);
+        // 直接调用（API 稳定），但走 Executable 多态，不出现 findAndHookMethod 之类特征串
+        Executable ex = target;
+        xposed.hook(ex).intercept(this);
     }
 
-    /** 反射 hookAllMethods(clazz, name, hook) */
-    public static void hookAll(Class<?> clazz, String name, XC_MethodHook hook) throws Throwable {
-        if (!live()) throw new IllegalStateException();
-        xbridge().getMethod("hookAllMethods", Class.class, String.class, XC_MethodHook.class)
-                .invoke(null, clazz, name, hook);
-    }
+    // ==================== 拦截 ====================
 
-    /** 反射 findAndHookMethod —— 等价 WinHook.m45 */
-    public static Object hook(Class<?> clazz, String name, Object... params) throws Throwable {
-        if (!live()) throw new IllegalStateException();
-        Class<?>[] types = new Class<?>[params.length + 2];
-        types[0] = Class.class;
-        types[1] = String.class;
-        for (int i = 0; i < params.length; i++) {
-            types[i + 2] = params[i].getClass();
+    @Override
+    public Object intercept(XposedInterface.Chain chain) throws Throwable {
+        Object result = chain.proceed();
+        switch (mode) {
+            case 0:
+                return (result instanceof Boolean) ? Boolean.TRUE : result;
+            case 1:
+                return (result instanceof Boolean) ? Boolean.FALSE : result;
+            case 2:
+                return fixed;
+            default:
+                return result;
         }
-        Method m = xh().getMethod("findAndHookMethod", types);
-        Object[] args = new Object[params.length + 2];
-        args[0] = clazz;
-        args[1] = name;
-        System.arraycopy(params, 0, args, 2, params.length);
-        return m.invoke(null, args);
     }
 
-    /** 反射写 Xposed 日志 */
-    public static void log(String msg) {
+    // ==================== 查找 ====================
+
+    /** 查类（可空） */
+    public static Class<?> findClass(String name, ClassLoader cl) {
         try {
-            xbridge().getMethod("log", String.class).invoke(null, msg);
+            return cl.loadClass(name);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 找无参方法（可空） */
+    public static Method findMethod(Class<?> c, String name) {
+        if (c == null) return null;
+        try {
+            Method m = c.getDeclaredMethod(name);
+            m.setAccessible(true);
+            return m;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 日志（反射包装 xposed.log） */
+    public static void log(XposedInterface x, String msg) {
+        try {
+            x.log(android.util.Log.INFO, "NewHook", msg);
         } catch (Throwable ignored) {
         }
     }
