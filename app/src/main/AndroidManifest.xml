@@ -2,20 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:label="NewHook"
+        android:label="@string/module_name"
+        android:description="@string/module_desc"
         android:icon="@android:drawable/ic_menu_manage">
-
-        <!-- Xposed 模块声明 -->
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="新模块 - 复刻 WinHook 手法 (com.luna.music)" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
-
     </application>
 
 </manifest>
