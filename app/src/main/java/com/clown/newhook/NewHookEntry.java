@@ -707,7 +707,8 @@ public class NewHookEntry extends XposedModule {
                     RefProxy.passthroughArg1(this, m).install();
                     nJ++;
                 } else if (!isStatic && pt.length == 2 && pt[0] == aq) {
-                    // I: (AudioQuality, boolean) → 放行音质
+                    // ⭐ I / K / h 三个实例方法签名完全相同 (AudioQuality, boolean)：
+                    //    I 已被拦，但 K / h 同样可能是降级点 —— 全部拦下
                     RefProxy.passthroughArg0(this, m).install();
                     nI++;
                 } else if (!isStatic && pt.length == 0) {
@@ -717,7 +718,8 @@ public class NewHookEntry extends XposedModule {
                 }
             } catch (Throwable t) { log("AQCFG " + m.getName() + " err: " + t); }
         }
-        log("AQCFG installed: J(pass)=" + nJ + " I(pass)=" + nI + " noarg(->lossless)=" + nS);
+        log("AQCFG installed: J(pass)=" + nJ + " (AudioQuality,bool)(pass)=" + nI
+                + " noarg(->lossless)=" + nS);
     }
 
     // ==================== VipStatus 枚举（终极判定源） ====================
