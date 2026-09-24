@@ -331,12 +331,9 @@ public class NewHookEntry extends XposedModule {
             try { RefProxy.forceFalse(this, m).install(); log("TRACK " + n + " -> false"); }
             catch (Throwable ex) { log("TRACK " + n + " err: " + ex); }
         }
-        // getPreview -> null（无试听限制）
-        Method gp = RefProxy.findMethod(t, "getPreview");
-        if (gp != null) {
-            try { RefProxy.force(this, gp, null).install(); log("TRACK getPreview -> null"); }
-            catch (Throwable ex) { log("TRACK getPreview err: " + ex); }
-        }
+        // getPreview 不能置 null —— TrackPlayable.getPreviewVid() 会 NPE 崩溃
+        // 仅保留 OnlyVip* 系列
+        log("TRACK getPreview kept (avoid NPE)");
     }
 
     // ==================== 音质权益（无损/全景声） ====================
