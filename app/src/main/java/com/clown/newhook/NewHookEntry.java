@@ -325,14 +325,23 @@ public class NewHookEntry extends XposedModule {
         Class<?> pi = RefProxy.findClass("com.luna.common.arch.db.entity.PlayerInfo", cl);
         if (rt == null || pi == null) { log("PLAYERINFO not found rt=" + (rt != null)); return; }
         try {
-            // 取 NORMAL 枚举常量
+            // 取 FULL 枚举常量（真实名不是 NORMAL）
             Object normalConst = null;
             if (rt.isEnum()) {
                 for (Object e : rt.getEnumConstants()) {
-                    if ("NORMAL".equals(String.valueOf(e))) { normalConst = e; break; }
+                    String n = String.valueOf(e);
+                    String nm = (e instanceof Enum) ? ((Enum<?>) e).name() : n;
+                    log("PLAYERINFO enum candidate name=" + nm + " str=" + n);
+                    if ("FULL".equals(nm) || "FULL".equals(n) || "full".equals(n)) { normalConst = e; break; }
+                }
+                // 兜底：按 value 字段找 "full"
+                if (normalConst == null) {
+                    for (Object e : rt.getEnumConstants()) {
+                        log("PLAYERINFO enum candidate = " + e);
+                    }
                 }
             }
-            if (normalConst == null) { log("PLAYERINFO NORMAL not found"); return; }
+            if (normalConst == null) { log("PLAYERINFO FULL not found isEnum=" + rt.isEnum()); return; }
             log("PLAYERINFO NORMAL = " + normalConst);
             Method g = RefProxy.findMethod(pi, "getMediaResType");
             if (g != null) {
