@@ -315,6 +315,28 @@ public class NewHookEntry extends XposedModule {
         hookVipStatus(cl);
         hookLancet(cl);
         hookAudioQuality(cl);
+        hookTrackPlayable(cl);
+    }
+
+    // ==================== Track 播放/音质鉴权字段 ====================
+    private void hookTrackPlayable(ClassLoader cl) {
+        Class<?> t = RefProxy.findClass("com.luna.common.arch.db.entity.Track", cl);
+        if (t == null) { log("TRACK not found"); return; }
+        // 布尔包装类：置 false（解除"仅VIP"限制）
+        for (String n : new String[]{"getOnlyVipPlayable", "getOnlyVipDownload",
+                "getQualityOnlyVipCanPlay", "getQualityOnlyVipDownload",
+                "getQualityOnlyPurchasedCanPlay", "getQualityOnlyPurchasedCanDownload"}) {
+            Method m = RefProxy.findMethod(t, n);
+            if (m == null) { log("TRACK skip " + n); continue; }
+            try { RefProxy.forceFalse(this, m).install(); log("TRACK " + n + " -> false"); }
+            catch (Throwable ex) { log("TRACK " + n + " err: " + ex); }
+        }
+        // getPreview -> null（无试听限制）
+        Method gp = RefProxy.findMethod(t, "getPreview");
+        if (gp != null) {
+            try { RefProxy.force(this, gp, null).install(); log("TRACK getPreview -> null"); }
+            catch (Throwable ex) { log("TRACK getPreview err: " + ex); }
+        }
     }
 
     // ==================== 音质权益（无损/全景声） ====================
