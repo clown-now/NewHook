@@ -85,12 +85,21 @@ public final class RefProxy implements XposedInterface.Hooker {
             default:
                 changed = result;
         }
-        android.util.Log.i("NewHook", "HIT " + target.getDeclaringClass().getSimpleName()
-                + "." + target.getName()
-                + " ret=" + target.getReturnType().getSimpleName()
-                + " old=" + result + " new=" + changed);
+        String name = target.getDeclaringClass().getSimpleName() + "." + target.getName();
+        android.util.Log.i("NewHook", "HIT " + name + " old=" + result + " new=" + changed);
+        if (DEBUG_STACK && "CommerceInfoMemberShipEntity.getVipStage".equals(name)) {
+            StringBuilder sb = new StringBuilder("STACK " + name);
+            StackTraceElement[] st = new Throwable().getStackTrace();
+            for (int i = 0; i < Math.min(st.length, 12); i++) {
+                sb.append("\n    at ").append(st[i]);
+            }
+            android.util.Log.i("NewHook", sb.toString());
+        }
         return changed;
     }
+
+    /** 临时调试：是否打印调用栈 */
+    private static final boolean DEBUG_STACK = true;
 
     // ==================== 查找 ====================
 
