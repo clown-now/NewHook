@@ -314,6 +314,36 @@ public class NewHookEntry extends XposedModule {
         hookUserBrief(cl);
         hookVipStatus(cl);
         hookLancet(cl);
+        hookAudioQuality(cl);
+    }
+
+    // ==================== 音质权益（无损/全景声） ====================
+    private void hookAudioQuality(ClassLoader cl) {
+        Class<?> aq = RefProxy.findClass("com.luna.common.arch.playable.AudioQuality", cl);
+        if (aq == null) { log("AQ not found"); return; }
+        Object lossless = null;
+        try {
+            java.lang.reflect.Field f = aq.getDeclaredField("LOSSLESS");
+            f.setAccessible(true);
+            lossless = f.get(null);
+            log("AQ LOSSLESS = " + lossless);
+        } catch (Throwable t) { log("AQ LOSSLESS err: " + t); }
+        if (lossless == null) return;
+
+        // AudioQualityConfig.resolveValueForEntitlement(Track) -> LOSSLESS
+        Class<?> cfg = RefProxy.findClass(
+                "com.luna.biz.playing.common.config.AudioQualityConfig", cl);
+        if (cfg != null) {
+            for (Method m : cfg.getDeclaredMethods()) {
+                if (m.getParameterCount() == 1
+                        && m.getParameterTypes()[0].getName().endsWith(".Track")) {
+                    try {
+                        RefProxy.force(this, m, lossless).install();
+                        log("AQCFG " + m.getName() + "(Track) -> LOSSLESS");
+                    } catch (Throwable t) { log("AQCFG skip " + m.getName() + ": " + t); }
+                }
+            }
+        }
     }
 
     // ==================== VipStatus 枚举（终极判定源） ====================
