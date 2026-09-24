@@ -310,6 +310,41 @@ public class NewHookEntry extends XposedModule {
                 log("ENTITY getVipStage not found");
             }
         } catch (Throwable t) { log("ENTITY probe err: " + t); }
+        hookSubscriptionEvent(cl);
+        hookUserBrief(cl);
+    }
+
+    // ==================== SubscriptionUpdateEvent（UI 状态源） ====================
+    private void hookSubscriptionEvent(ClassLoader cl) {
+        Class<?> c = RefProxy.findClass(
+                "com.luna.biz.entitlement.event.SubscriptionUpdateEvent", cl);
+        if (c == null) { log("EVENT not found"); return; }
+        Method vs = RefProxy.findMethod(c, "getVipStage");
+        if (vs != null) {
+            try { RefProxy.force(this, vs, "svip").install(); log("EVENT getVipStage -> svip"); }
+            catch (Throwable t) { log("EVENT getVipStage err: " + t); }
+        }
+        Method iv = RefProxy.findMethod(c, "isVip");
+        if (iv != null) {
+            try { RefProxy.force(this, iv, "true").install(); log("EVENT isVip -> \"true\""); }
+            catch (Throwable t) { log("EVENT isVip err: " + t); }
+        }
+        Method st = RefProxy.findMethod(c, "getStatus");
+        if (st != null) {
+            try { RefProxy.force(this, st, "svip").install(); log("EVENT getStatus -> svip"); }
+            catch (Throwable t) { log("EVENT getStatus err: " + t); }
+        }
+    }
+
+    // ==================== UserBrief（用户资料） ====================
+    private void hookUserBrief(ClassLoader cl) {
+        Class<?> c = RefProxy.findClass("com.luna.common.arch.net.entity.user.UserBrief", cl);
+        if (c == null) { log("USER not found"); return; }
+        Method vs = RefProxy.findMethod(c, "getVipStage");
+        if (vs != null) {
+            try { RefProxy.force(this, vs, "svip").install(); log("USER getVipStage -> svip"); }
+            catch (Throwable t) { log("USER getVipStage err: " + t); }
+        }
     }
 
     // ==================== 日志 ====================
