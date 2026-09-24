@@ -316,6 +316,35 @@ public class NewHookEntry extends XposedModule {
         hookLancet(cl);
         hookAudioQuality(cl);
         hookTrackPlayable(cl);
+        hookPlayerInfo(cl);
+    }
+
+    // ==================== PlayerInfo 播放资源类型 ====================
+    private void hookPlayerInfo(ClassLoader cl) {
+        Class<?> rt = RefProxy.findClass("com.luna.common.player.mediaplayer.MediaResType", cl);
+        Class<?> pi = RefProxy.findClass("com.luna.common.arch.db.entity.PlayerInfo", cl);
+        if (rt == null || pi == null) { log("PLAYERINFO not found rt=" + (rt != null)); return; }
+        try {
+            // 取 NORMAL 枚举常量
+            Object normalConst = null;
+            if (rt.isEnum()) {
+                for (Object e : rt.getEnumConstants()) {
+                    if ("NORMAL".equals(String.valueOf(e))) { normalConst = e; break; }
+                }
+            }
+            if (normalConst == null) { log("PLAYERINFO NORMAL not found"); return; }
+            log("PLAYERINFO NORMAL = " + normalConst);
+            Method g = RefProxy.findMethod(pi, "getMediaResType");
+            if (g != null) {
+                RefProxy.force(this, g, normalConst).install();
+                log("PLAYERINFO getMediaResType -> NORMAL");
+            }
+            Method ex = RefProxy.findMethod(pi, "isExpired");
+            if (ex != null) {
+                RefProxy.forceFalse(this, ex).install();
+                log("PLAYERINFO isExpired -> false");
+            }
+        } catch (Throwable t) { log("PLAYERINFO err: " + t); }
     }
 
     // ==================== Track 播放/音质鉴权字段 ====================
