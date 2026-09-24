@@ -1,6 +1,7 @@
 package com.clown.newhook;
 
 import com.clown.newhook.util.RefProxy;
+import com.clown.newhook.util.SignatureHook;
 import com.clown.newhook.util.StrVault;
 
 import java.lang.reflect.Method;
@@ -115,9 +116,17 @@ public class NewHookEntry extends XposedModule {
     private static final int S30_KEY = 0x2468;  // "onCreate"
 
     /** 广告判定方法加密表 */
-    private static final short[][] AD_ARR = {S22, S23, S24, S25, S26, S27, S28, S29};
-    private static final int[] AD_KEY = {S22_KEY, S23_KEY, S24_KEY, S25_KEY,
+    private static final short[][] AD_ARR = {S22, S23, S25, S26, S27, S28, S29};
+    private static final int[] AD_KEY = {S22_KEY, S23_KEY, S25_KEY,
             S26_KEY, S27_KEY, S28_KEY, S29_KEY};
+
+    /**
+     * isAdRewardStart 是写入口而非判定口：真实原型 void isAdRewardStart(boolean)
+     * （反汇编确认：ins=2、iput ...->q:Z、return-void）。
+     * 它不参与 AD_ARR 的零参判定链，需单独按「带 1 参」拦截。
+     */
+    private static final short[] S24_ADREWARD = {23125,23119,23165,23128,23150,23129,23115,23133,23118,23128,23151,23112,23133,23118,23112};
+    private static final int S24_ADREWARD_KEY = 0x5A3C;  // isAdRewardStart
 
     /** 会员布尔方法加密表 */
     private static final short[][] VIP_ARR = {S14, S15, S16, S17};
@@ -145,7 +154,75 @@ public class NewHookEntry extends XposedModule {
         probeCommerceEntity(cl);
         hookAdConfig(cl);
         hookSplashAd(cl);
+        hookColdSplash(cl);
+        hookBySignature(cl);
         log("all hooks installed");
+    }
+
+    // ==================== 类型签名扫描（移植自 MoonHook） ====================
+    /**
+     * 不依赖方法名，只按「参数/返回类型签名」批量 hook。
+     * 抗混淆、抗版本改名 —— 汽水 20.x 改名后依然命中。
+     */
+    private void hookBySignature(ClassLoader cl) {
+        // ---- 1. 试听区间列表：把"仅试听"条目剔除 ----
+        Class<?> pc = RefProxy.findClass(
+                "com.luna.biz.playing.player.PlayerController", cl);
+        Class<?> pe = RefProxy.findClass(
+                "com.luna.biz.playing.common.entitlement.PlayableEntitlementExtKt", cl);
+
+        if (pc != null) {
+            int n = SignatureHook.hookNoArgList(this, pc, item -> {
+                if (item == null) return false;
+                // 试听区间模型：字段名混淆，用值域启发式判断
+                try {
+                    long start = readLongField(item, 0);
+                    long end = readLongField(item, 1);
+                    // 试听段特征：start=0 且 end 在 30s~300s 之间
+                    if (start == 0 && end > 20000 && end < 600000) {
+                        log("SIG drop preview-range " + start + "~" + end);
+                        return true;
+                    }
+                } catch (Throwable ignored) {}
+                return false;
+            });
+            log("SIG PlayerController no-arg-List hooked = " + n);
+        }
+
+        // ---- 2. PlayableExtKt 全部 boolean 静态判定 -> false ----
+        if (pe != null) {
+            int n = SignatureHook.hookAllNoArgBool(this, pe, false, true);
+            log("SIG PlayableExtKt booleans -> false = " + n);
+        }
+
+        // ---- 3. Track 的 1 参 boolean 鉴权方法 -> false ----
+        Class<?> track = RefProxy.findClass("com.luna.common.arch.db.entity.Track", cl);
+        if (track != null) {
+            int n = SignatureHook.hook1ArgBool(this, track, String.class, false);
+            log("SIG Track(String)->false = " + n);
+        }
+
+        // ---- 4. PlayerInfo 的 3 参 boolean 判定 -> true ----
+        Class<?> pi = RefProxy.findClass("com.luna.common.arch.db.entity.PlayerInfo", cl);
+        if (pi != null) {
+            int n = SignatureHook.hookByName(this, pi, "setValue", 2, Boolean.FALSE);
+            log("SIG PlayerInfo setValue->false = " + n);
+        }
+    }
+
+    /** 读对象里第 idx 个 long 字段（按声明顺序，跳过静态） */
+    private static long readLongField(Object obj, int idx) {
+        int seen = 0;
+        for (java.lang.reflect.Field f : obj.getClass().getDeclaredFields()) {
+            if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+            if (f.getType() != long.class && f.getType() != Long.class) continue;
+            f.setAccessible(true);
+            if (seen == idx) {
+                try { return f.getLong(obj); } catch (Throwable t) { return 0; }
+            }
+            seen++;
+        }
+        return 0;
     }
 
     // ==================== 本地层 ====================
@@ -251,7 +328,30 @@ public class NewHookEntry extends XposedModule {
             }
         }
         blockAdActivity(cl, StrVault.dec(S6, S6_KEY));
-        blockAdActivity(cl, StrVault.dec(S7, S7_KEY));
+        // 真实激励视频 Activity / 广告落地页浏览器（S7 旧名 RewardAdActivity 已不存在，弃用）
+        blockAdActivity(cl, "com.luna.biz.ad.adns.luna.LunaRewardActivity");
+        blockAdActivity(cl, "com.luna.biz.ad.adns.dsp.landing.AdLandingBrowserActivity");
+        hookAdRewardStartSetter(ad);
+    }
+
+    /**
+     * 单独拦截带参 setter：void isAdRewardStart(boolean)。
+     * 老代码把它当零参判定方法 → findMethod 必然返回 null（这就是 skip ad isAdRewardStart 的来源）。
+     * 正确做法是吞掉这次调用：原方法体（iput ...->q:Z）不执行，字段 q 永远保持 false。
+     */
+    private void hookAdRewardStartSetter(Class<?> ad) {
+        String name = StrVault.dec(S24_ADREWARD, S24_ADREWARD_KEY);
+        Method m = RefProxy.findMethodByArgc(ad, name, 1);
+        if (m == null) {
+            log("skip arg-setter " + name + " (1 arg)");
+            return;
+        }
+        try {
+            RefProxy.swallow(this, m).install();
+            log("ad " + name + "(boolean) -> swallowed");
+        } catch (Throwable t) {
+            log("skip arg-setter " + name + ": " + t);
+        }
     }
 
     private void blockAdActivity(ClassLoader cl, String clsName) {
@@ -314,6 +414,19 @@ public class NewHookEntry extends XposedModule {
             } catch (Throwable ignored) {}
         }
         log("ADCFG hooked booleans = " + n);
+    }
+
+    // ==================== 开屏广告观察者 ====================
+    private void hookColdSplash(ClassLoader cl) {
+        Class<?> c = RefProxy.findClass("com.luna.biz.ad.ColdSplashAdActivityObserver", cl);
+        if (c == null) { log("SPLASHOBS not found"); return; }
+        for (Method m : c.getDeclaredMethods()) {
+            Class<?> rt = m.getReturnType();
+            if (rt == boolean.class || rt == Boolean.class) {
+                try { RefProxy.forceFalse(this, m).install(); log("SPLASHOBS " + m.getName() + " -> false"); }
+                catch (Throwable ignored) {}
+            }
+        }
     }
 
     // ==================== 开屏广告加载任务 ====================

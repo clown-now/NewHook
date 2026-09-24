@@ -54,6 +54,15 @@ public final class RefProxy implements XposedInterface.Hooker {
         return new RefProxy(x, m, 2, v);
     }
 
+    /**
+     * 吞掉调用：不执行原方法体，直接返回类型默认值。
+     * 用于 void setter —— 例如 isAdRewardStart(boolean) 这类写状态的方法，
+     * 拦下后字段保持默认 false，从源头掐断"激励广告开始"状态写入。
+     */
+    public static RefProxy swallow(XposedInterface x, Method m) {
+        return new RefProxy(x, m, 3, null);
+    }
+
     // ==================== 安装 ====================
 
     /**
@@ -70,6 +79,14 @@ public final class RefProxy implements XposedInterface.Hooker {
 
     @Override
     public Object intercept(XposedInterface.Chain chain) throws Throwable {
+        // mode 3 = 吞掉调用：不执行原方法体
+        if (mode == 3) {
+            Class<?> rt0 = target.getReturnType();
+            Object def = defaultOf(rt0);
+            String nm0 = target.getDeclaringClass().getSimpleName() + "." + target.getName();
+            android.util.Log.i("NewHook", "SWALLOW " + nm0 + " -> " + def);
+            return def;
+        }
         Object result = chain.proceed();
         Object changed;
         Class<?> rt = target.getReturnType();
@@ -106,6 +123,20 @@ public final class RefProxy implements XposedInterface.Hooker {
 
     // ==================== 查找 ====================
 
+    /** 类型默认值（供 mode 3 吞掉调用时返回） */
+    private static Object defaultOf(Class<?> rt) {
+        if (rt == void.class || rt == Void.class) return null;
+        if (rt == boolean.class || rt == Boolean.class) return Boolean.FALSE;
+        if (rt == int.class || rt == Integer.class) return 0;
+        if (rt == long.class || rt == Long.class) return 0L;
+        if (rt == short.class || rt == Short.class) return (short) 0;
+        if (rt == byte.class || rt == Byte.class) return (byte) 0;
+        if (rt == char.class || rt == Character.class) return (char) 0;
+        if (rt == float.class || rt == Float.class) return 0f;
+        if (rt == double.class || rt == Double.class) return 0d;
+        return null;
+    }
+
     /** 查类（可空） */
     public static Class<?> findClass(String name, ClassLoader cl) {
         try {
@@ -137,6 +168,22 @@ public final class RefProxy implements XposedInterface.Hooker {
                 m.setAccessible(true);
                 return m;
             } catch (Throwable ignored) {}
+            cur = cur.getSuperclass();
+        }
+        return null;
+    }
+
+    /** 找方法：名称 + 参数个数（不限具体类型），用于带参 setter */
+    public static Method findMethodByArgc(Class<?> c, String name, int argc) {
+        if (c == null) return null;
+        Class<?> cur = c;
+        while (cur != null) {
+            for (Method m : cur.getDeclaredMethods()) {
+                if (m.getName().equals(name) && m.getParameterCount() == argc) {
+                    m.setAccessible(true);
+                    return m;
+                }
+            }
             cur = cur.getSuperclass();
         }
         return null;
