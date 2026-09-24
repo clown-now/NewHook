@@ -142,6 +142,7 @@ public class NewHookEntry extends XposedModule {
         hookLocalTier(cl);
         hookServerVip(cl);
         hookAds(cl);
+        probeCommerceEntity(cl);
         log("all hooks installed");
     }
 
@@ -285,6 +286,23 @@ public class NewHookEntry extends XposedModule {
         } catch (Throwable t) {
             log("block skip " + clsName + ": " + t);
         }
+    }
+
+    // ==================== 探测：CommerceInfoMemberShipEntity ====================
+    private void probeCommerceEntity(ClassLoader cl) {
+        try {
+            Class<?> c = RefProxy.findClass(
+                    "com.luna.biz.entitlement.core.commerceinfo.entity.CommerceInfoMemberShipEntity", cl);
+            if (c == null) { log("ENTITY not found"); return; }
+            for (String n : new String[]{"isVip", "isPayingUser", "getVipStage", "getMembershipDetailMap"}) {
+                Method m = RefProxy.findMethod(c, n);
+                if (m == null) { log("ENTITY skip " + n); continue; }
+                try {
+                    RefProxy.forceTrue(this, m).install();
+                    log("ENTITY " + n + " -> true");
+                } catch (Throwable t) { log("ENTITY skip " + n + ": " + t); }
+            }
+        } catch (Throwable t) { log("ENTITY probe err: " + t); }
     }
 
     // ==================== 日志 ====================
