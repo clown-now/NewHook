@@ -312,6 +312,52 @@ public class NewHookEntry extends XposedModule {
         } catch (Throwable t) { log("ENTITY probe err: " + t); }
         hookSubscriptionEvent(cl);
         hookUserBrief(cl);
+        hookVipStatus(cl);
+        hookLancet(cl);
+    }
+
+    // ==================== VipStatus 枚举（终极判定源） ====================
+    private void hookVipStatus(ClassLoader cl) {
+        Class<?> c = RefProxy.findClass("com.luna.common.arch.db.entity.VipStatus", cl);
+        if (c == null) { log("VIPSTATUS not found"); return; }
+        for (String n : new String[]{"isVip", "isSVip"}) {
+            Method m = RefProxy.findMethod(c, n);
+            if (m == null) { log("VIPSTATUS skip " + n); continue; }
+            try { RefProxy.forceTrue(this, m).install(); log("VIPSTATUS " + n + " -> true"); }
+            catch (Throwable t) { log("VIPSTATUS " + n + " err: " + t); }
+        }
+        Method gv = RefProxy.findMethod(c, "getValue");
+        if (gv != null) {
+            try { RefProxy.force(this, gv, "svip").install(); log("VIPSTATUS getValue -> svip"); }
+            catch (Throwable t) { log("VIPSTATUS getValue err: " + t); }
+        }
+        // 同时也 hook CommerceInfoRepo.V()
+        Class<?> repo = RefProxy.findClass(
+                "com.luna.biz.entitlement.core.commerceinfo.core.CommerceInfoRepo", cl);
+        if (repo != null) {
+            Method v = RefProxy.findMethod(repo, "V");
+            if (v != null) {
+                try { RefProxy.forceTrue(this, v).install(); log("REPO V hooked"); }
+                catch (Throwable t) { log("REPO V err: " + t); }
+            }
+        }
+    }
+
+    // ==================== Lancet Hook 检测 ====================
+    private void hookLancet(ClassLoader cl) {
+        for (String cn : new String[]{
+                "com.luna.music.lint.lancet.LancetHookDetector",
+                "com.luna.music.lint.lancet.LancetHookDetector$Companion"}) {
+            Class<?> c = RefProxy.findClass(cn, cl);
+            if (c == null) { log("LANCET not found " + cn); continue; }
+            for (Method m : c.getDeclaredMethods()) {
+                Class<?> rt = m.getReturnType();
+                if (rt == boolean.class) {
+                    try { RefProxy.forceFalse(this, m).install(); log("LANCET " + m.getName() + " -> false"); }
+                    catch (Throwable ignored) {}
+                }
+            }
+        }
     }
 
     // ==================== SubscriptionUpdateEvent（UI 状态源） ====================
