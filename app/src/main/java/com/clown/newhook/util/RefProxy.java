@@ -70,6 +70,7 @@ public final class RefProxy implements XposedInterface.Hooker {
 
     @Override
     public Object intercept(XposedInterface.Chain chain) throws Throwable {
+        android.util.Log.i("NewHook", "HIT " + target.getName() + " ret=" + (target.getReturnType()));
         Object result = chain.proceed();
         switch (mode) {
             case 0:
