@@ -63,6 +63,23 @@ public final class RefProxy implements XposedInterface.Hooker {
         return new RefProxy(x, m, 3, null);
     }
 
+    /**
+     * 原样放行首个参数：不执行原方法体，直接返回 args[0]。
+     * 用于"权益校验降级"型方法 —— 例如 AudioQualityConfig.I(AudioQuality, boolean)，
+     * 它会把越权的 lossless 降级成 auto；拦下后直接返回传入的 lossless，降级消失。
+     */
+    public static RefProxy passthroughArg0(XposedInterface x, Method m) {
+        return new RefProxy(x, m, 4, null);
+    }
+
+    /**
+     * 原样放行第 2 个参数（args[1]）：用于 J(key, AudioQuality, boolean, int) 这类
+     * 音质参数位于第 2 位的静态校验方法。
+     */
+    public static RefProxy passthroughArg1(XposedInterface x, Method m) {
+        return new RefProxy(x, m, 5, null);
+    }
+
     // ==================== 安装 ====================
 
     /**
@@ -86,6 +103,24 @@ public final class RefProxy implements XposedInterface.Hooker {
             String nm0 = target.getDeclaringClass().getSimpleName() + "." + target.getName();
             android.util.Log.i("NewHook", "SWALLOW " + nm0 + " -> " + def);
             return def;
+        }
+        // mode 4 = 原样放行首个参数（用于权益校验降级方法）
+        if (mode == 4) {
+            Object[] args = null;
+            try { args = chain.getArgs().toArray(); } catch (Throwable ignored) {}
+            Object a0 = (args != null && args.length > 0) ? args[0] : null;
+            String nm0 = target.getDeclaringClass().getSimpleName() + "." + target.getName();
+            android.util.Log.i("NewHook", "PASSARG0 " + nm0 + " -> " + a0);
+            return a0;
+        }
+        // mode 5 = 原样放行第 2 个参数（音质参数在 arg[1] 的校验方法）
+        if (mode == 5) {
+            Object[] args = null;
+            try { args = chain.getArgs().toArray(); } catch (Throwable ignored) {}
+            Object a1 = (args != null && args.length > 1) ? args[1] : null;
+            String nm0 = target.getDeclaringClass().getSimpleName() + "." + target.getName();
+            android.util.Log.i("NewHook", "PASSARG1 " + nm0 + " -> " + a1);
+            return a1;
         }
         Object result = chain.proceed();
         Object changed;

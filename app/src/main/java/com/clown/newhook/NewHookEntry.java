@@ -664,6 +664,21 @@ public class NewHookEntry extends XposedModule {
     }
 
     // ==================== 音质权益（无损/全景声） ====================
+    /**
+     * frida 实测调用链（NewHook 生效态）：
+     *   AQCFG.M()/G()/N()                       -> lossless   （解析出无损）
+     *   AQCFG.I(AudioQuality,boolean)           -> auto       （★降级点：传 lossless 出 auto）
+     *   AQCFG.J(key,AudioQuality,boolean,int,..)-> auto       （★落盘校验：lossless 被降级写回）
+     *   AQCFG.S()                               -> auto       （当前生效值）
+     *
+     * 原实现按名字找 resolveValueForEntitlement —— 该方法在 dex 中不存在（已被 R8 单字母化），
+     * 所以 AQCFG 分支从未命中，导致"选了无损又自己跳回极高"。
+     *
+     * 现改为按签名定位：
+     *   1) 静态 4 参 + 返回 AudioQuality        → J  (校验落盘)  → 放行 arg1(音质)
+     *   2) 实例 2 参(首参 AudioQuality) + 返回  → I  (权益降级)  → 放行 arg0
+     *   3) 实例 0 参 + 返回 AudioQuality        → S  (当前值)    → 强制 LOSSLESS
+     */
     private void hookAudioQuality(ClassLoader cl) {
         Class<?> aq = RefProxy.findClass("com.luna.common.arch.playable.AudioQuality", cl);
         if (aq == null) { log("AQ not found"); return; }
@@ -676,20 +691,33 @@ public class NewHookEntry extends XposedModule {
         } catch (Throwable t) { log("AQ LOSSLESS err: " + t); }
         if (lossless == null) return;
 
-        // AudioQualityConfig.resolveValueForEntitlement(Track) -> LOSSLESS
         Class<?> cfg = RefProxy.findClass(
                 "com.luna.biz.playing.common.config.AudioQualityConfig", cl);
-        if (cfg != null) {
-            for (Method m : cfg.getDeclaredMethods()) {
-                if (m.getParameterCount() == 1
-                        && m.getParameterTypes()[0].getName().endsWith(".Track")) {
-                    try {
-                        RefProxy.force(this, m, lossless).install();
-                        log("AQCFG " + m.getName() + "(Track) -> LOSSLESS");
-                    } catch (Throwable t) { log("AQCFG skip " + m.getName() + ": " + t); }
+        if (cfg == null) { log("AQCFG not found"); return; }
+
+        int nJ = 0, nI = 0, nS = 0;
+        for (Method m : cfg.getDeclaredMethods()) {
+            Class<?> rt = m.getReturnType();
+            if (rt != aq) continue;                       // 只关心返回 AudioQuality 的
+            Class<?>[] pt = m.getParameterTypes();
+            boolean isStatic = java.lang.reflect.Modifier.isStatic(m.getModifiers());
+            try {
+                if (isStatic && pt.length == 4 && pt[1] == aq) {
+                    // J: (key, AudioQuality, boolean, int) → 放行 arg[1]（音质）
+                    RefProxy.passthroughArg1(this, m).install();
+                    nJ++;
+                } else if (!isStatic && pt.length == 2 && pt[0] == aq) {
+                    // I: (AudioQuality, boolean) → 放行音质
+                    RefProxy.passthroughArg0(this, m).install();
+                    nI++;
+                } else if (!isStatic && pt.length == 0) {
+                    // S: () → 恒 LOSSLESS
+                    RefProxy.force(this, m, lossless).install();
+                    nS++;
                 }
-            }
+            } catch (Throwable t) { log("AQCFG " + m.getName() + " err: " + t); }
         }
+        log("AQCFG installed: J(pass)=" + nJ + " I(pass)=" + nI + " noarg(->lossless)=" + nS);
     }
 
     // ==================== VipStatus 枚举（终极判定源） ====================
