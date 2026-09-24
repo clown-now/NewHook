@@ -143,6 +143,8 @@ public class NewHookEntry extends XposedModule {
         hookServerVip(cl);
         hookAds(cl);
         probeCommerceEntity(cl);
+        hookAdConfig(cl);
+        hookSplashAd(cl);
         log("all hooks installed");
     }
 
@@ -255,7 +257,9 @@ public class NewHookEntry extends XposedModule {
     private void blockAdActivity(ClassLoader cl, String clsName) {
         try {
             Class<?> c = RefProxy.findClass(clsName, cl);
-            Method onCreate = RefProxy.findMethod(c, StrVault.dec(S30, S30_KEY));
+            if (c == null) { log("block cls not found " + clsName); return; }
+            // onCreate 有 (Bundle) / (Bundle,PersistableBundle) 多重载，用 findAnyMethod 兜底
+            Method onCreate = RefProxy.findAnyMethod(c, StrVault.dec(S30, S30_KEY));
             if (onCreate == null) {
                 log("block skip " + clsName);
                 return;
@@ -282,9 +286,61 @@ public class NewHookEntry extends XposedModule {
                     return chain.proceed();
                 }
             });
-            log("blocked " + clsName);
+            log("blocked " + clsName + " (" + onCreate.getName() + ")");
         } catch (Throwable t) {
             log("block skip " + clsName + ": " + t);
+        }
+    }
+
+    // ==================== 广告配置总开关（AdSettingsConfig） ====================
+    /**
+     * AdService 的广告判定全部来源于 AdSettingsConfig 的配置读取。
+     * 把该配置类的所有无参布尔方法统一置 false，能覆盖：
+     *   canShowSplashColdAd / isInAdActivity / isAdPreloadOptEnabled 等
+     */
+    private void hookAdConfig(ClassLoader cl) {
+        Class<?> cfg = RefProxy.findClass(
+                "com.luna.common.arch.config.commercial.ad.AdSettingsConfig", cl);
+        if (cfg == null) { log("ADCFG not found"); return; }
+        int n = 0;
+        Class<?> cur = cfg;
+        while (cur != null && cur != Object.class) {
+            for (Method m : cur.getDeclaredMethods()) {
+                if (m.getParameterCount() != 0) continue;
+                if (m.getReturnType() != boolean.class) continue;
+                if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
+                try {
+                    RefProxy.forceFalse(this, m).install();
+                    n++;
+                } catch (Throwable ignored) {}
+            }
+            cur = cur.getSuperclass();
+        }
+        log("ADCFG hooked booleans = " + n);
+    }
+
+    // ==================== 开屏广告加载任务 ====================
+    private void hookSplashAd(ClassLoader cl) {
+        for (String cn : new String[]{
+                "com.luna.biz.ad.biz.init.AdSplashLoadTask$Companion",
+                "com.luna.biz.ad.biz.init.AdSplashLoadTask"}) {
+            Class<?> c = RefProxy.findClass(cn, cl);
+            if (c == null) continue;
+            for (Method m : c.getDeclaredMethods()) {
+                if (m.getReturnType() == boolean.class) {
+                    try { RefProxy.forceFalse(this, m).install(); log("SPLASH " + cn + "." + m.getName() + " -> false"); }
+                    catch (Throwable ignored) {}
+                }
+            }
+            // run/execute 类方法：直接吞掉返回（不加载）
+            for (Method m : c.getDeclaredMethods()) {
+                if (m.getParameterCount() == 0 && void.class.equals(m.getReturnType())) {
+                    try {
+                        RefProxy.force(this, m, null).install();
+                        log("SPLASH " + cn + "." + m.getName() + " -> noop");
+                    } catch (Throwable ignored) {}
+                }
+            }
         }
     }
 
@@ -317,6 +373,61 @@ public class NewHookEntry extends XposedModule {
         hookAudioQuality(cl);
         hookTrackPlayable(cl);
         hookPlayerInfo(cl);
+        hookPreview(cl);
+    }
+
+    // ==================== 试听(60s)区间解锁 ====================
+    /**
+     * 试听限制的两处闸门：
+     *  1) PlayableEntitlementExtKt.x(Track) —— isPreviewResOnly，判定"是否仅试听资源"
+     *  2) NetTrackPreview.getEnd()          —— 试听区间终点（常为 60000ms）
+     * 双管齐下：判定改 false，区间终点拉到 duration。
+     */
+    private void hookPreview(ClassLoader cl) {
+        // 1) isPreviewResOnly(x) / isCandidatePreview(m) / 相关布尔判定 -> false
+        Class<?> pe = RefProxy.findClass(
+                "com.luna.biz.playing.common.entitlement.PlayableEntitlementExtKt", cl);
+        if (pe != null) {
+            // Kt 文件类：目标方法全部是 static。只排除 <clinit> 等
+            for (Method m : pe.getDeclaredMethods()) {
+                if (m.getReturnType() != boolean.class) continue;
+                String mn = m.getName();
+                if ("<clinit>".equals(mn) || "<init>".equals(mn)) continue;
+                try { RefProxy.forceFalse(this, m).install(); log("PREVIEW " + mn + "() -> false"); }
+                catch (Throwable ignored) {}
+            }
+        } else {
+            log("PREVIEW ext not found");
+        }
+
+        // 2) NetTrackPreview.getEnd() -> getDuration()，试听区间拉满
+        Class<?> np = RefProxy.findClass(
+                "com.luna.common.arch.net.entity.track.NetTrackPreview", cl);
+        if (np == null) { log("PREVIEW NP not found"); return; }
+        Method getEnd = RefProxy.findMethod(np, "getEnd");
+        final Method getDur = RefProxy.findMethod(np, "getDuration");
+        if (getEnd == null || getDur == null) { log("PREVIEW end/dur not found"); return; }
+        try {
+            final XposedInterface self = this;
+            this.hook(getEnd).intercept(new XposedInterface.Hooker() {
+                @Override
+                public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                    Object real = chain.proceed();
+                    Object dur;
+                    try { dur = getDur.invoke(chain.getThisObject()); } catch (Throwable t) { return real; }
+                    try {
+                        long e = ((Number) real).longValue();
+                        long d = ((Number) dur).longValue();
+                        if (e > 0 && d > e) {
+                            RefProxy.log(self, "PREVIEW end " + e + " -> " + d);
+                            return dur;
+                        }
+                    } catch (Throwable ignored) {}
+                    return real;
+                }
+            });
+            log("PREVIEW getEnd -> getDuration");
+        } catch (Throwable t) { log("PREVIEW end err: " + t); }
     }
 
     // ==================== PlayerInfo 播放资源类型 ====================
@@ -459,8 +570,14 @@ public class NewHookEntry extends XposedModule {
         }
         Method iv = RefProxy.findMethod(c, "isVip");
         if (iv != null) {
-            try { RefProxy.force(this, iv, "true").install(); log("EVENT isVip -> \"true\""); }
-            catch (Throwable t) { log("EVENT isVip err: " + t); }
+            // isVip() 若返回 boolean，强设字符串会 ClassCastException；按返回类型分派
+            if (iv.getReturnType() == boolean.class) {
+                try { RefProxy.forceTrue(this, iv).install(); log("EVENT isVip -> true"); }
+                catch (Throwable t) { log("EVENT isVip err: " + t); }
+            } else {
+                try { RefProxy.force(this, iv, "true").install(); log("EVENT isVip -> \"true\""); }
+                catch (Throwable t) { log("EVENT isVip err: " + t); }
+            }
         }
         Method st = RefProxy.findMethod(c, "getStatus");
         if (st != null) {

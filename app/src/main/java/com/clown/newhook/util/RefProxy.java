@@ -124,6 +124,37 @@ public final class RefProxy implements XposedInterface.Hooker {
         }
     }
 
+    /** 按参数类型找方法（可空）。paramTypes 为 Class 数组（用 Class.forName 拿到的类型） */
+    public static Method findMethod(Class<?> c, String name, Class<?>... paramTypes) {
+        if (c == null) return null;
+        Class<?> cur = c;
+        while (cur != null) {
+            try {
+                Method m = cur.getDeclaredMethod(name, paramTypes);
+                m.setAccessible(true);
+                return m;
+            } catch (Throwable ignored) {}
+            cur = cur.getSuperclass();
+        }
+        return null;
+    }
+
+    /** 找类中第一个同名方法（任意重载，可含父类）。用于 onCreate 这类多参方法 */
+    public static Method findAnyMethod(Class<?> c, String name) {
+        if (c == null) return null;
+        Class<?> cur = c;
+        while (cur != null) {
+            for (Method m : cur.getDeclaredMethods()) {
+                if (m.getName().equals(name)) {
+                    m.setAccessible(true);
+                    return m;
+                }
+            }
+            cur = cur.getSuperclass();
+        }
+        return null;
+    }
+
     /** 日志（反射包装 xposed.log） */
     public static void log(XposedInterface x, String msg) {
         try {
