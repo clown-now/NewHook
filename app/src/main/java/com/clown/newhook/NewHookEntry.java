@@ -294,13 +294,20 @@ public class NewHookEntry extends XposedModule {
             Class<?> c = RefProxy.findClass(
                     "com.luna.biz.entitlement.core.commerceinfo.entity.CommerceInfoMemberShipEntity", cl);
             if (c == null) { log("ENTITY not found"); return; }
-            for (String n : new String[]{"isVip", "isPayingUser", "getVipStage", "getMembershipDetailMap"}) {
+            // 布尔类
+            for (String n : new String[]{"isVip", "isPayingUser", "isAboutToExpired", "getInGracePeriod"}) {
                 Method m = RefProxy.findMethod(c, n);
                 if (m == null) { log("ENTITY skip " + n); continue; }
-                try {
-                    RefProxy.forceTrue(this, m).install();
-                    log("ENTITY " + n + " -> true");
-                } catch (Throwable t) { log("ENTITY skip " + n + ": " + t); }
+                try { RefProxy.forceTrue(this, m).install(); log("ENTITY " + n + " -> true"); }
+                catch (Throwable t) { log("ENTITY skip " + n + ": " + t); }
+            }
+            // 字符串类：vipStage -> svip
+            Method vs = RefProxy.findMethod(c, "getVipStage");
+            if (vs != null) {
+                try { RefProxy.force(this, vs, "svip").install(); log("ENTITY getVipStage -> svip"); }
+                catch (Throwable t) { log("ENTITY getVipStage err: " + t); }
+            } else {
+                log("ENTITY getVipStage not found");
             }
         } catch (Throwable t) { log("ENTITY probe err: " + t); }
     }
