@@ -475,6 +475,8 @@ public class NewHookEntry extends XposedModule {
             } else {
                 log("ENTITY getVipStage not found");
             }
+            // ⭐ UI 渲染层字段（frida 实测：UI 读的是这组，而不是 isVip/getVipStage）
+            hookCommerceUiFields(c);
         } catch (Throwable t) { log("ENTITY probe err: " + t); }
         hookSubscriptionEvent(cl);
         hookUserBrief(cl);
@@ -484,6 +486,72 @@ public class NewHookEntry extends XposedModule {
         hookTrackPlayable(cl);
         hookPlayerInfo(cl);
         hookPreview(cl);
+    }
+
+    // ==================== 会员 UI 渲染字段（frida 实测定向） ====================
+    /**
+     * 从 frida attach 实测（NewHook 生效态）拿到的真实字段值：
+     *   getVipStage               = svip          （已被本模块改写）
+     *   getExpireDate             = 1699729036    （2023-11-11，早已过期）
+     *   getExpireTimeMax          = 1699729036    （同上）
+     *   getLastMemberShipType     = "vip"
+     *   getModifierVipLabelSuffix = "1元续费"     ← UI 实际渲染的标签
+     *   getSideBarVipEntrance     = VipEntrance(title=1元续费, style=new_style_without_suffix)
+     *
+     * 结论：UI 展示的是这组字段，而不是 isVip()/getVipStage()。
+     * 所以要把它们逐个覆盖成 SVIP 语义，UI 才会真的变化。
+     */
+    private void hookCommerceUiFields(Class<?> c) {
+        // ---- 到期时间：拉到 2100-01-01（秒级）----
+        final long FAR_FUTURE_SEC = 4102444800L;
+        for (String n : new String[]{"getExpireDate", "getExpireTimeMax"}) {
+            Method m = RefProxy.findMethod(c, n);
+            if (m == null) { log("UI skip " + n); continue; }
+            try { RefProxy.force(this, m, FAR_FUTURE_SEC).install(); log("UI " + n + " -> 2100"); }
+            catch (Throwable t) { log("UI " + n + " err: " + t); }
+        }
+
+        // ---- 会员类型 / 标签后缀：改成 svip 语义，抹掉"1元续费"诱导 ----
+        for (String n : new String[]{"getLastMemberShipType", "getModifierVipLabelSuffix",
+                "getVipLabelSuffix"}) {
+            Method m = RefProxy.findMethod(c, n);
+            if (m == null) { log("UI skip " + n); continue; }
+            try { RefProxy.force(this, m, "SVIP").install(); log("UI " + n + " -> SVIP"); }
+            catch (Throwable t) { log("UI " + n + " err: " + t); }
+        }
+
+        // ---- VIP 入口对象：构造 VipEntrance(title=SVIP, style=new_style_with_svip_label) ----
+        Object entrance = buildVipEntrance(c);
+        if (entrance == null) { log("UI VipEntrance build fail"); return; }
+        for (String n : new String[]{"getSideBarVipEntrance", "getVipEntranceLabel",
+                "getDefaultVipEntrance"}) {
+            Method m = RefProxy.findMethod(c, n);
+            if (m == null) { log("UI skip " + n); continue; }
+            try { RefProxy.force(this, m, entrance).install(); log("UI " + n + " -> VipEntrance(SVIP)"); }
+            catch (Throwable t) { log("UI " + n + " err: " + t); }
+        }
+    }
+
+    /** 构造 VipEntrance(title, style) 实例；类找不到时返回 null */
+    private Object buildVipEntrance(Class<?> anyLoaded) {
+        try {
+            Class<?> ve = RefProxy.findClass("com.luna.biz.entitlement.entity.VipEntrance",
+                    anyLoaded.getClassLoader());
+            if (ve == null) return null;
+            java.lang.reflect.Constructor<?> ctor = null;
+            for (java.lang.reflect.Constructor<?> cc : ve.getDeclaredConstructors()) {
+                Class<?>[] pt = cc.getParameterTypes();
+                if (pt.length == 2 && pt[0] == String.class && pt[1] == String.class) {
+                    ctor = cc; break;
+                }
+            }
+            if (ctor == null) return null;
+            ctor.setAccessible(true);
+            return ctor.newInstance("SVIP", "new_style_with_svip_label");
+        } catch (Throwable t) {
+            log("VipEntrance ctor err: " + t);
+            return null;
+        }
     }
 
     // ==================== 试听(60s)区间解锁 ====================
