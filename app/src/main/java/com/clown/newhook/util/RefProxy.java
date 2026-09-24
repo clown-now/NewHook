@@ -72,12 +72,15 @@ public final class RefProxy implements XposedInterface.Hooker {
     public Object intercept(XposedInterface.Chain chain) throws Throwable {
         Object result = chain.proceed();
         Object changed;
+        Class<?> rt = target.getReturnType();
+        boolean boolLike = (rt == Boolean.class || rt == boolean.class);
         switch (mode) {
             case 0:
-                changed = (result instanceof Boolean) ? Boolean.TRUE : result;
+                // 恒 true。仅当返回类型是 Boolean/boolean 时才改写
+                changed = (result instanceof Boolean || (result == null && boolLike)) ? Boolean.TRUE : result;
                 break;
             case 1:
-                changed = (result instanceof Boolean) ? Boolean.FALSE : result;
+                changed = (result instanceof Boolean || (result == null && boolLike)) ? Boolean.FALSE : result;
                 break;
             case 2:
                 changed = fixed;

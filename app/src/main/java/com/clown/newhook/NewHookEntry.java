@@ -303,18 +303,15 @@ public class NewHookEntry extends XposedModule {
                 "com.luna.common.arch.config.commercial.ad.AdSettingsConfig", cl);
         if (cfg == null) { log("ADCFG not found"); return; }
         int n = 0;
-        Class<?> cur = cfg;
-        while (cur != null && cur != Object.class) {
-            for (Method m : cur.getDeclaredMethods()) {
-                if (m.getParameterCount() != 0) continue;
-                if (m.getReturnType() != boolean.class) continue;
-                if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
-                try {
-                    RefProxy.forceFalse(this, m).install();
-                    n++;
-                } catch (Throwable ignored) {}
-            }
-            cur = cur.getSuperclass();
+        // 只 hook 本类声明的方法，避免误伤 BaseConfig.exist() 等全局配置判定
+        for (Method m : cfg.getDeclaredMethods()) {
+            if (m.getParameterCount() != 0) continue;
+            if (m.getReturnType() != boolean.class) continue;
+            if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
+            try {
+                RefProxy.forceFalse(this, m).install();
+                n++;
+            } catch (Throwable ignored) {}
         }
         log("ADCFG hooked booleans = " + n);
     }
