@@ -70,18 +70,26 @@ public final class RefProxy implements XposedInterface.Hooker {
 
     @Override
     public Object intercept(XposedInterface.Chain chain) throws Throwable {
-        android.util.Log.i("NewHook", "HIT " + target.getName() + " ret=" + (target.getReturnType()));
         Object result = chain.proceed();
+        Object changed;
         switch (mode) {
             case 0:
-                return (result instanceof Boolean) ? Boolean.TRUE : result;
+                changed = (result instanceof Boolean) ? Boolean.TRUE : result;
+                break;
             case 1:
-                return (result instanceof Boolean) ? Boolean.FALSE : result;
+                changed = (result instanceof Boolean) ? Boolean.FALSE : result;
+                break;
             case 2:
-                return fixed;
+                changed = fixed;
+                break;
             default:
-                return result;
+                changed = result;
         }
+        android.util.Log.i("NewHook", "HIT " + target.getDeclaringClass().getSimpleName()
+                + "." + target.getName()
+                + " ret=" + target.getReturnType().getSimpleName()
+                + " old=" + result + " new=" + changed);
+        return changed;
     }
 
     // ==================== 查找 ====================
